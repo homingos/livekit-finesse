@@ -1,0 +1,52 @@
+name: Release
+
+# Publishes to npm when a version tag (v0.1.1, ...) is pushed. Uses npm Trusted Publishing
+# (GitHub OIDC): no npm token is stored. Configure the trusted publisher on npmjs.com for
+# @flamai/livekit-plugin-finesse (repository homingos/livekit-finesse, workflow release.yml) before tagging.
+on:
+  push:
+    tags: ['v*']
+
+env:
+  NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+permissions:
+  contents: read
+  id-token: write # OIDC token for npm Trusted Publishing
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+          registry-url: 'https://registry.npmjs.org'
+      - name: Tag matches package.json version
+        run: |
+          v=$(node -p "require('./package.json').version")
+          if [ "v$v" != "$GITHUB_REF_NAME" ]; then
+            echo "tag $GITHUB_REF_NAME does not match package.json version $v" >&2
+            exit 1
+          fi
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test
+      - run: pnpm build
+      # Trusted Publishing needs npm 11.5.1 or later; Node 22 ships npm 10.
+      - run: npm install -g npm@11.5.1
+      # Bootstrap: npm only lets a trusted publisher be attached to a package that already
+      # exists, so the first release can use an NPM_TOKEN secret (a granular token for the
+      # @flamai scope). Delete the secret once the trusted publisher is set up.
+      - name: Publish with NPM_TOKEN
+        if: env.NPM_TOKEN != ''
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish with Trusted Publishing
+        if: env.NPM_TOKEN == ''
+        run: npm publish --access public
