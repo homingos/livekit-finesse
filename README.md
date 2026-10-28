@@ -1,7 +1,7 @@
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/homingos/livekit-finesse/main/.github/assets/banner-livekit-dark.png">
-  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/homingos/livekit-finesse/main/.github/assets/banner-livekit-light.png">
-  <img alt="Finesse by Flam: text-to-speech plugin for LiveKit Agents" src="https://raw.githubusercontent.com/homingos/livekit-finesse/main/.github/assets/banner-livekit-light.png" width="100%">
+  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/banner-livekit-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset=".github/assets/banner-livekit-light.png">
+  <img alt="Finesse by Flam: text-to-speech plugin for LiveKit Agents" src=".github/assets/banner-livekit-light.png" width="100%">
 </picture>
 
 <p>
