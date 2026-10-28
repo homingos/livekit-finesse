@@ -1,7 +1,7 @@
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/banner-livekit-dark.png">
-  <source media="(prefers-color-scheme: light)" srcset=".github/assets/banner-livekit-light.png">
-  <img alt="Finesse by Flam: text-to-speech plugin for LiveKit Agents" src=".github/assets/banner-livekit-light.png" width="100%">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/homingos/livekit-finesse/main/.github/assets/banner-livekit-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/homingos/livekit-finesse/main/.github/assets/banner-livekit-light.png">
+  <img alt="Finesse by Flam: text-to-speech plugin for LiveKit Agents" src="https://raw.githubusercontent.com/homingos/livekit-finesse/main/.github/assets/banner-livekit-light.png" width="100%">
 </picture>
 
 <p>
@@ -30,8 +30,7 @@ including 22 Indian languages.
 **[Dashboard](https://finesse.flamapp.ai/dashboard)** ·
 **[Changelog](https://github.com/homingos/livekit-finesse/blob/main/CHANGELOG.md)**
 
-> [!NOTE]
-> We've also proposed this plugin to LiveKit
+> **Note:** we've also proposed this plugin to LiveKit
 > ([livekit/agents-js#2777](https://github.com/livekit/agents-js/pull/2777)). Once it's merged it
 > will be available as `@livekit/agents-plugin-finesse` too, with the same options. Until then, use
 > this package.

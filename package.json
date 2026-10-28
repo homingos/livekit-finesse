@@ -1,6 +1,6 @@
 {
   "name": "@flamai/livekit-plugin-finesse",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Finesse text-to-speech for LiveKit Agents (Node.js): realtime speech in 60 languages, including 22 Indian languages, with your cloned voices.",
   "license": "Apache-2.0",
   "repository": {
@@ -50,6 +50,7 @@
     "lint": "prettier --check ."
   },
   "dependencies": {
+    "@types/ws": "^8.5.12",
     "ws": "^8.18.0"
   },
   "peerDependencies": {
@@ -60,7 +61,6 @@
     "@livekit/agents": "1.9.4",
     "@livekit/rtc-node": "^1.2.1",
     "@types/node": "^22.0.0",
-    "@types/ws": "^8.5.12",
     "prettier": "^3.3.0",
     "tsup": "^8.3.0",
     "tsx": "^4.23.15",
