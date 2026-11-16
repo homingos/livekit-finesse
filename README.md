@@ -69,7 +69,7 @@ It works alongside `@livekit/agents` 1.9 or later, which your agent already depe
 ## Get an API key
 
 1. Sign in to the [Finesse dashboard](https://finesse.flamapp.ai/dashboard).
-2. Open the [API keys page](https://finesse.flamapp.ai/dashboard/settings?tab=api-keys) and create
+2. Open the [API keys page](https://finesse.flamapp.ai/dashboard/developers?tab=api-keys) and create
    a key. Copy it right away: it is shown only once, and it starts with `flv_`.
 3. Put it in your agent's environment, where the plugin finds it:
 
