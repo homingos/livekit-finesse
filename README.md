@@ -160,16 +160,17 @@ and `ory`.
 
 ## Options
 
-| Option          | Default              | Description                                                                          |
-| --------------- | -------------------- | ------------------------------------------------------------------------------------ |
-| `voice`         | required             | The id of a ready voice, from the catalog or one of your cloned voices.              |
-| `language`      | `"en"`               | The language to speak (see [Languages](#languages)).                                 |
-| `sampleRate`    | `24000`              | Output sample rate in Hz: `8000` for telephony, or from `24000` (native) to `48000`. |
-| `numStep`       | server default (32)  | Quality versus latency, from 1 to 32. Lower is faster.                               |
-| `guidanceScale` | server default (2.0) | Synthesis guidance, from 0 to 10.                                                    |
-| `lengthScale`   | server default (1.0) | Speaking rate, greater than 0 up to 5. Higher is slower.                             |
-| `idleFlushMs`   | server default (800) | When the LLM pauses mid-sentence, speak the pending text after this many ms.         |
-| `apiKey`        | `FINESSE_API_KEY`    | Your Finesse API key.                                                                |
+| Option             | Default              | Description                                                                          |
+| ------------------ | -------------------- | ------------------------------------------------------------------------------------ |
+| `voice`            | required             | The id of a ready voice, from the catalog or one of your cloned voices.              |
+| `language`         | `"en"`               | The language to speak (see [Languages](#languages)).                                 |
+| `sampleRate`       | `24000`              | Output sample rate in Hz: `8000` for telephony, or from `24000` (native) to `48000`. |
+| `numStep`          | server default (32)  | Quality versus latency, from 1 to 32. Lower is faster.                               |
+| `guidanceScale`    | server default (2.0) | Synthesis guidance, from 0 to 10.                                                    |
+| `lengthScale`      | server default (1.0) | Speaking rate, greater than 0 up to 5. Higher is slower.                             |
+| `idleFlushMs`      | server default (800) | When the LLM pauses mid-sentence, speak the pending text after this many ms.         |
+| `useDirectSession` | `false`              | Connect straight to the synthesis GPU in your region for lower first-audio latency.  |
+| `apiKey`           | `FINESSE_API_KEY`    | Your Finesse API key.                                                                |
 
 Audio comes back as mono 16-bit PCM at `sampleRate`.
 
@@ -211,6 +212,20 @@ for await (const ev of stream) {
 }
 await tts.close();
 ```
+
+## Direct sessions
+
+With `useDirectSession: true`, the plugin connects straight to the synthesis GPU in your account's
+region over a short-lived, voice-scoped session, rather than the relayed public stream — one hop
+fewer, for noticeably lower first-audio latency on live calls:
+
+```ts
+const tts = new finesse.TTS({ voice: '<voice-id>', useDirectSession: true });
+```
+
+The plugin mints a session for the current voice and reuses it across turns; changing the voice
+(via `updateOptions`) mints a new one, and a session is renewed automatically when it ends or its
+character budget is spent. Everything else behaves exactly the same.
 
 ## Connections and limits
 
