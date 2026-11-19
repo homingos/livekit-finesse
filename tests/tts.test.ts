@@ -7,7 +7,7 @@ import {
   tts,
 } from '@livekit/agents';
 import { once } from 'node:events';
-import type { IncomingMessage } from 'node:http';
+import { createServer, type IncomingMessage, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import { type WebSocket, WebSocketServer } from 'ws';
@@ -27,30 +27,62 @@ type Frame = Record<string, unknown>;
  */
 class FakeFinesse {
   wss!: WebSocketServer;
+  http!: Server;
   url = '';
+  httpBase = '';
   received: Frame[] = [];
   frameBytes: number[] = [];
   requests: IncomingMessage[] = [];
+  offered: (string | undefined)[] = [];
+  mintRequests: unknown[] = [];
+  mintStatus = 201;
   connections = 0;
   rejectStatus?: number;
   answerFinalize = true;
   onTask?: (ws: WebSocket, ctx: string) => void;
 
   async start(): Promise<void> {
+    // One port serves both the session mint (POST) and the realtime socket (WS upgrade).
+    this.http = createServer((req, res) => {
+      if (req.method === 'POST' && req.url === '/realtime/sessions') {
+        let raw = '';
+        req.on('data', (c) => (raw += c));
+        req.on('end', () => {
+          this.mintRequests.push(JSON.parse(raw || '{}'));
+          if (this.mintStatus !== 201) {
+            res.writeHead(this.mintStatus, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ code: 'insufficient_credits' }));
+            return;
+          }
+          res.writeHead(201, { 'Content-Type': 'application/json' });
+          res.end(
+            JSON.stringify({
+              data: { url: this.url, token: 'sess_token', protocol: 'finesse.v1' },
+            }),
+          );
+        });
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
     this.wss = new WebSocketServer({
-      host: '127.0.0.1',
-      port: 0,
+      server: this.http,
       handleProtocols: (protocols) => (protocols.has('finesse.v1') ? 'finesse.v1' : false),
       verifyClient: (_info, done) => {
         if (this.rejectStatus) done(false, this.rejectStatus);
         else done(true);
       },
     });
-    await once(this.wss, 'listening');
-    this.url = `ws://127.0.0.1:${(this.wss.address() as AddressInfo).port}`;
+    this.http.listen(0, '127.0.0.1');
+    await once(this.http, 'listening');
+    const port = (this.http.address() as AddressInfo).port;
+    this.url = `ws://127.0.0.1:${port}`;
+    this.httpBase = `http://127.0.0.1:${port}`;
     this.wss.on('connection', (ws, req) => {
       this.connections++;
       this.requests.push(req);
+      this.offered.push(req.headers['sec-websocket-protocol']);
       ws.on('message', (raw, isBinary) => {
         if (isBinary) return;
         const text = raw.toString();
@@ -76,6 +108,7 @@ class FakeFinesse {
   async stop(): Promise<void> {
     for (const client of this.wss.clients) client.terminate();
     await new Promise<void>((resolve) => this.wss.close(() => resolve()));
+    await new Promise<void>((resolve) => this.http.close(() => resolve()));
   }
 }
 
@@ -96,6 +129,15 @@ const makeTTS = async (opts: Partial<ConstructorParameters<typeof TTS>[0]> = {})
   await server.start();
   finesse = new TTS({ apiKey: API_KEY, voice: VOICE, ...opts });
   finesse._wsUrl = server.url;
+  return finesse;
+};
+
+const makeDirectTTS = async (opts: Partial<ConstructorParameters<typeof TTS>[0]> = {}) => {
+  server = new FakeFinesse();
+  await server.start();
+  finesse = new TTS({ apiKey: API_KEY, voice: VOICE, useDirectSession: true, ...opts });
+  // The mint lives on the fake's HTTP base; its response points the socket back at the fake.
+  finesse._apiBase = server.httpBase;
   return finesse;
 };
 
@@ -379,6 +421,107 @@ describe('streaming', () => {
       expect(Math.max(...server.frameBytes)).toBeLessThan(1024 * 1024);
     },
   );
+});
+
+describe('direct session', () => {
+  const BUDGET = 200000;
+
+  it('mints a session and connects with the token as the second subprotocol', async () => {
+    const t = await makeDirectTTS();
+    const audio = await collect(t.synthesize('Hello there.', NO_RETRY));
+    expect(audio.length).toBeGreaterThan(CHUNK.length);
+    expect(server.mintRequests).toEqual([{ voice_ids: [VOICE], budget_chars: BUDGET }]);
+    // The socket is authed by the token as the second subprotocol, not by the API key.
+    expect(server.offered[0]).toContain('sess_token');
+    expect(server.requests[0]!.headers['x-api-key']).toBeUndefined();
+    expect(server.requests[0]!.headers['x-finesse-client']).toMatch(/^livekit-plugin-finesse-js\//);
+  });
+
+  it('reuses one session across turns', async () => {
+    const t = await makeDirectTTS();
+    for (const text of ['One.', 'Two.']) await collect(t.synthesize(text, NO_RETRY));
+    expect(server.mintRequests.length).toBe(1);
+    expect(server.connections).toBe(1);
+  });
+
+  it('re-mints when the voice changes', async () => {
+    const t = await makeDirectTTS();
+    await collect(t.synthesize('One.', NO_RETRY));
+    t.updateOptions({ voice: '221100ffeeddccbbaa998877' });
+    await collect(t.synthesize('Two.', NO_RETRY));
+    expect(server.mintRequests).toEqual([
+      { voice_ids: [VOICE], budget_chars: BUDGET },
+      { voice_ids: ['221100ffeeddccbbaa998877'], budget_chars: BUDGET },
+    ]);
+  });
+
+  it('closes the pool for a voice no longer in use', async () => {
+    const OTHER = '221100ffeeddccbbaa998877';
+    const t = await makeDirectTTS();
+    await collect(t.synthesize('One.', NO_RETRY)); // mints VOICE
+    t.updateOptions({ voice: OTHER });
+    await collect(t.synthesize('Two.', NO_RETRY)); // mints OTHER, closes the idle VOICE pool
+    t.updateOptions({ voice: VOICE });
+    await collect(t.synthesize('Three.', NO_RETRY)); // VOICE pool was closed, so it mints again
+    expect(server.mintRequests.map((m) => (m as { voice_ids: string[] }).voice_ids[0])).toEqual([
+      VOICE,
+      OTHER,
+      VOICE,
+    ]);
+    await t.close();
+  });
+
+  it("mints for the stream's snapshot voice, not the live one", async () => {
+    const t = await makeDirectTTS();
+    // The stream snapshots the current voice when it is created...
+    const stream = t.stream({ connOptions: NO_RETRY });
+    // ...and the caller switches voices before it has minted or connected.
+    t.updateOptions({ voice: '221100ffeeddccbbaa998877' });
+    stream.pushText('Hello there.');
+    stream.endInput();
+    await collect(stream);
+    // The session is minted for the voice the stream snapshotted, so the minted session and the
+    // task_start it carries always name the same voice.
+    expect(server.mintRequests).toEqual([{ voice_ids: [VOICE], budget_chars: BUDGET }]);
+    expect(server.received.find((m) => m.type === 'task_start')!.voice_id).toBe(VOICE);
+  });
+
+  it('treats a spent session budget as retryable', async () => {
+    const t = await makeDirectTTS();
+    server.onTask = (ws, ctx) =>
+      ws.send(
+        JSON.stringify({
+          type: 'error',
+          code: 'insufficient_credits',
+          fatal: true,
+          context_id: ctx,
+        }),
+      );
+    const error = await errorOf(t, () => {
+      const stream = t.stream({ connOptions: NO_RETRY });
+      stream.pushText('Hello.');
+      stream.endInput();
+      void collect(stream);
+    });
+    expect(error).toBeInstanceOf(APIStatusError);
+    expect(error.body).toEqual({ code: 'insufficient_credits' });
+    // Retryable here (classic mode is not): a new session is minted and the turn continues.
+    expect(error.retryable).toBe(true);
+  });
+
+  it('surfaces a refused mint without retrying it', async () => {
+    const t = await makeDirectTTS();
+    server.mintStatus = 402; // the account really is out of credits
+    const error = await errorOf(t, () => {
+      const stream = t.stream({ connOptions: NO_RETRY });
+      stream.pushText('Hello.');
+      stream.endInput();
+      void collect(stream);
+    });
+    expect(error).toBeInstanceOf(APIStatusError);
+    expect((error as APIStatusError).statusCode).toBe(402);
+    expect(error.retryable).toBe(false);
+  });
 });
 
 describe('errors', () => {
