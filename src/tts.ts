@@ -185,6 +185,9 @@ export class TTS extends tts.TTS {
   // draws from the pool for the voice it snapshotted, which guarantees the session it uses was
   // minted for that exact voice.
   #directPools = new Map<string, ConnectionPool<WebSocket>>();
+  // Count of streams currently synthesizing on each direct-session voice, so an idle pool for a
+  // voice no longer in use can be closed without severing an active stream.
+  #directInuse = new Map<string, number>();
   label = 'finesse.TTS';
   /** @internal The realtime WebSocket URL; tests point it at a local server. */
   _wsUrl = FINESSE_WS_URL;
@@ -300,6 +303,7 @@ export class TTS extends tts.TTS {
     await this.pool.close();
     for (const pool of this.#directPools.values()) await pool.close();
     this.#directPools.clear();
+    this.#directInuse.clear();
   }
 
   /**
@@ -323,6 +327,33 @@ export class TTS extends tts.TTS {
       this.#directPools.set(voice, pool);
     }
     return pool;
+  }
+
+  /** @internal Mark a stream as actively synthesizing on `voice`'s direct-session pool. */
+  holdDirect(voice: string): void {
+    if (!this.#opts.useDirectSession) return;
+    this.#directInuse.set(voice, (this.#directInuse.get(voice) ?? 0) + 1);
+  }
+
+  /**
+   * @internal Drop a stream's hold on `voice` and close the pools no voice is using any more.
+   *
+   * A direct session holds a GPU session open, so once a voice is no longer current and no stream
+   * is still synthesizing on it, its pool is closed rather than left idle. A pool with an active
+   * stream is kept (its checked-out connection is never severed), and a later stream for a closed
+   * voice simply mints a fresh session.
+   */
+  async releaseDirect(voice: string): Promise<void> {
+    if (!this.#opts.useDirectSession) return;
+    const remaining = (this.#directInuse.get(voice) ?? 0) - 1;
+    if (remaining > 0) this.#directInuse.set(voice, remaining);
+    else this.#directInuse.delete(voice);
+    for (const [v, pool] of [...this.#directPools]) {
+      if (v !== this.#opts.voice && (this.#directInuse.get(v) ?? 0) === 0) {
+        this.#directPools.delete(v);
+        await pool.close();
+      }
+    }
   }
 
   /** @internal */
@@ -381,7 +412,9 @@ export class TTS extends tts.TTS {
       await waitForWebSocketOpen(ws, 'Finesse');
       ws.on('error', () => {});
       // A direct connection belongs to its voice's pool, so it must leave that pool on close.
-      ws.on('close', () => this.poolFor(voice).remove(ws));
+      // Look the pool up without creating one, so a connection closing after its pool was evicted
+      // does not resurrect an empty pool.
+      ws.on('close', () => this.#directPools.get(voice)?.remove(ws));
       return ws;
     } catch (e) {
       try {
@@ -583,7 +616,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       }
     };
 
-    await this.#tts.poolFor(opts.voice).withConnection(
+    this.#tts.holdDirect(opts.voice);
+    const connection = this.#tts.poolFor(opts.voice).withConnection(
       async (ws) => {
         if (ws.readyState !== WebSocket.OPEN) {
           throw new APIConnectionError({ message: 'Finesse connection closed while idle' });
@@ -774,6 +808,11 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       },
       { timeout: this.connOptions.timeoutMs, signal: this.abortSignal },
     );
+    try {
+      await connection;
+    } finally {
+      await this.#tts.releaseDirect(opts.voice);
+    }
   }
 }
 
